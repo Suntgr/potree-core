@@ -407,7 +407,40 @@ void main() {
 
 	// POINT COLOR SELECTION
 	#ifdef new_format
-		vColor = rgba;
+		// In "new_format" (Potree 2.x / metadata.json), point colors are typically provided as RGBA.
+		// However, we still want to support alternate color modes (e.g. classification coloring)
+		// without forcing consumers to convert data formats.
+		#if defined color_type_classification
+			vec4 cl = getClassification();
+			vColor = vec4(cl.rgb, rgba.a);
+		#elif defined color_type_height
+			vColor = vec4(getElevation(), rgba.a);
+		#elif defined color_type_rgb_height
+			vec3 cHeight = getElevation();
+			vColor = vec4(mix(rgba.xyz, cHeight, transition), rgba.a);
+		#elif defined color_type_intensity
+			float w = getIntensity();
+			vColor = vec4(vec3(w), rgba.a);
+		#elif defined color_type_intensity_gradient
+			float w = getIntensity();
+			vColor = vec4(texture(gradient, vec2(w, 1.0 - w)).rgb, rgba.a);
+		#elif defined color_type_color
+			vColor = vec4(uColor, rgba.a);
+		#elif defined color_type_lod
+			float w = getLOD() / 10.0;
+			vColor = vec4(texture(gradient, vec2(w, 1.0 - w)).rgb, rgba.a);
+		#elif defined color_type_point_index
+			vColor = vec4(indices.rgb, rgba.a);
+		#elif defined color_type_return_number
+			vColor = vec4(getReturnNumber(), rgba.a);
+		#elif defined color_type_source
+			vColor = vec4(getSourceID(), rgba.a);
+		#elif defined color_type_normal
+			vColor = vec4((modelMatrix * vec4(normal, 0.0)).xyz, rgba.a);
+		#else
+			// Default: use provided RGBA colors.
+			vColor = rgba;
+		#endif
 	#elif defined color_type_rgb
 		vColor = getRGB();
 	#elif defined color_type_height
