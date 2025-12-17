@@ -1,7 +1,9 @@
 import {
 	AdditiveBlending,
+	Box3,
 	BufferGeometry,
 	Camera,
+	CanvasTexture,
 	Color,
 	GLSL3,
 	LessEqualDepth,
@@ -30,7 +32,7 @@ import {
 } from '../constants';
 import {PointCloudOctree} from '../point-cloud-octree';
 import {PointCloudOctreeNode} from '../point-cloud-octree-node';
-import {byLevelAndIndex} from '../utils/utils';
+import {byLevelAndIndex, isBrowser} from '../utils/utils';
 import {DEFAULT_CLASSIFICATION} from './classification';
 import {ClipMode, IClipBox} from './clipping';
 import {PointColorType, PointOpacityType, PointShape, PointSizeType, TreeType} from './enums';
@@ -89,6 +91,14 @@ export interface IPointCloudMaterialParameters {
 export interface IPointCloudMaterialUniforms {
 	/** Bounding box size as [width, height, depth] */
 	bbSize: IUniform<[number, number, number]>;
+	/** Enable color map overlay (0/1) */
+	useColorMap: IUniform<boolean>;
+	/** RGBA color map texture used to override/mix point colors */
+	colorMap: IUniform<Texture>;
+	/** World-space XY bounds for mapping to colorMap: [minX, minY, sizeX, sizeY] */
+	colorMapBounds: IUniform<[number, number, number, number]>;
+	/** Opacity/mix factor for color map overlay */
+	colorMapOpacity: IUniform<number>;
 	/** Supplement value for depth blending calculations */
 	blendDepthSupplement: IUniform<number>;
 	/** Hardness factor for blending operations */
@@ -260,6 +270,10 @@ export class PointCloudMaterial extends RawShaderMaterial
 
 	clipBoxes: IClipBox[] = [];
 
+	private colorMapCanvas?: HTMLCanvasElement;
+	private colorMapTexture?: CanvasTexture;
+	private colorMapTextureSize: number = 0;
+
 	visibleNodesTexture: Texture | undefined;
 
 	private visibleNodeTextureOffsets = new Map<string, number>();
@@ -276,6 +290,10 @@ export class PointCloudMaterial extends RawShaderMaterial
 
 	uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>> = {
 		bbSize: makeUniform('fv', [0, 0, 0] as [number, number, number]),
+		useColorMap: makeUniform('b', false),
+		colorMap: makeUniform('t', generateDataTexture(1, 1, new Color(0x000000))),
+		colorMapBounds: makeUniform('fv', [0, 0, 1, 1] as [number, number, number, number]),
+		colorMapOpacity: makeUniform('f', 1.0),
 		blendDepthSupplement: makeUniform('f', 0.0),
 		blendHardness: makeUniform('f', 2.0),
 		classificationLUT: makeUniform('t', this.classificationTexture || new Texture()),
@@ -670,6 +688,141 @@ export class PointCloudMaterial extends RawShaderMaterial
   	}
 
   	this.setUniform('clipBoxes', clipBoxesArray);
+  }
+
+  /**
+   * Assign a precomputed color map texture used to override/mix point colors.
+   * The mapping is based on world XY: uv = (world.xy - bounds.xy) / bounds.zw.
+   */
+  setColorMap(texture: Texture | null, bounds: [number, number, number, number], opacity: number = 1.0): void
+  {
+  	if (!texture)
+  	{
+  		this.setUniform('useColorMap', false);
+  		return;
+  	}
+
+  	this.setUniform('colorMap', texture);
+  	this.setUniform('colorMapBounds', bounds);
+  	this.setUniform('colorMapOpacity', opacity);
+  	this.setUniform('useColorMap', true);
+  }
+
+  /**
+   * Build/update a color map from a list of top-down rectangles and assign it to this material.
+   * This is designed for large counts (e.g. ~1000 rectangles) where per-rectangle uniforms are not feasible.
+   *
+   * Rect format expected (minimal):
+   * - center: {x, y}
+   * - width: number (world units in X)
+   * - height: number (world units in Y)
+   * - rotation: number (radians, around +Z in world space)
+   *
+   * You can provide a `getColor(rect)` function to pick per-rect colors.
+   */
+  setColorMapFromRects<T extends {center: {x: number; y: number}; width: number; height: number; rotation: number}>(
+  	rects: T[],
+  	options: {
+  		/** Bounds used to map world XY into the texture. Defaults to unit square if not provided. */
+  		bounds?: Box3 | {minX: number; minY: number; maxX: number; maxY: number};
+  		/** Texture resolution (square). Typical values: 1024/2048. Default 2048. */
+  		resolution?: number;
+  		/** Global mix factor for overlay. Default 1.0 */
+  		opacity?: number;
+  		/** Color accessor for each rect */
+  		getColor?: (rect: T) => Color | string | number;
+  		/** If true, clear the map each update. Default true. */
+  		clear?: boolean;
+  	} = {},
+  ): void
+  {
+  	if (!isBrowser())
+  	{
+  		// Can't build a canvas-based texture outside the browser.
+  		return;
+  	}
+
+  	const resolution = Math.max(1, Math.floor(options.resolution ?? 2048));
+  	const opacity = options.opacity ?? 1.0;
+  	const clear = options.clear !== false;
+
+  	let minX = 0, minY = 0, maxX = 1, maxY = 1;
+  	const b = options.bounds;
+  	if (b)
+  	{
+  		if ((b as any).isBox3)
+  		{
+  			const bb = b as Box3;
+  			minX = bb.min.x; minY = bb.min.y;
+  			maxX = bb.max.x; maxY = bb.max.y;
+  		}
+  		else
+  		{
+  			const bb = b as any;
+  			minX = bb.minX; minY = bb.minY;
+  			maxX = bb.maxX; maxY = bb.maxY;
+  		}
+  	}
+
+  	const sizeX = Math.max(1e-9, maxX - minX);
+  	const sizeY = Math.max(1e-9, maxY - minY);
+
+  	// Prepare/reuse canvas + texture
+  	if (!this.colorMapCanvas || this.colorMapTextureSize !== resolution)
+  	{
+  		this.colorMapCanvas = document.createElement('canvas');
+  		this.colorMapCanvas.width = resolution;
+  		this.colorMapCanvas.height = resolution;
+  		this.colorMapTexture = new CanvasTexture(this.colorMapCanvas);
+  		this.colorMapTexture.flipY = true; // keep world-y (up) mapped to v (up)
+  		this.colorMapTexture.magFilter = NearestFilter;
+  		this.colorMapTexture.minFilter = NearestFilter;
+  		this.colorMapTextureSize = resolution;
+  	}
+
+  	const canvas = this.colorMapCanvas!;
+  	const ctx = canvas.getContext('2d')!;
+  	if (clear)
+  	{
+  		ctx.clearRect(0, 0, resolution, resolution);
+  	}
+
+  	const colorTmp = new Color();
+
+  	for (const rect of rects)
+  	{
+  		const cx = ((rect.center.x - minX) / sizeX) * resolution;
+  		const cy = (1.0 - (rect.center.y - minY) / sizeY) * resolution; // world maxY -> canvas top
+
+  		const w = (rect.width / sizeX) * resolution;
+  		const h = (rect.height / sizeY) * resolution;
+
+  		let c: any = options.getColor ? options.getColor(rect) : (rect as any).color;
+  		if (!c)
+  		{
+  			c = 0xff0000;
+  		}
+  		if (c instanceof Color)
+  		{
+  			colorTmp.copy(c);
+  		}
+  		else
+  		{
+  			colorTmp.set(c);
+  		}
+
+  		ctx.save();
+  		ctx.translate(cx, cy);
+  		// Canvas has Y-down; rotation direction differs from world. Negate to match typical Z-rotation.
+  		ctx.rotate(-rect.rotation);
+  		ctx.fillStyle = `#${colorTmp.getHexString()}`;
+  		ctx.fillRect(-w * 0.5, -h * 0.5, w, h);
+  		ctx.restore();
+  	}
+
+  	this.colorMapTexture!.needsUpdate = true;
+
+  	this.setColorMap(this.colorMapTexture!, [minX, minY, sizeX, sizeY], opacity);
   }
 
   get gradient(): IGradient 
