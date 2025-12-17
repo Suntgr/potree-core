@@ -799,10 +799,18 @@ export class PointCloudMaterial extends RawShaderMaterial
   	}
 
   	const canvas = this.colorMapCanvas!;
-  	const ctx = canvas.getContext('2d')!;
+		// Force an alpha-capable 2D context. Some environments may otherwise treat the
+		// canvas as opaque, which would make the background alpha = 1 and "black out"
+		// the whole point cloud when mixing by map alpha.
+  	const ctx = canvas.getContext('2d', {alpha: true}) as CanvasRenderingContext2D;
   	if (clear)
   	{
-  		ctx.clearRect(0, 0, resolution, resolution);
+			// Clear to fully transparent in a way that's robust across browsers.
+			ctx.save();
+			ctx.globalCompositeOperation = 'copy';
+			ctx.fillStyle = 'rgba(0,0,0,0)';
+			ctx.fillRect(0, 0, resolution, resolution);
+			ctx.restore();
   	}
 
   	const colorTmp = new Color();
