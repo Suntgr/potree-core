@@ -514,10 +514,12 @@ void main() {
 
 	// COLOR ENCODING ADJUSTMENTS
 	#if defined(output_color_encoding_sRGB) && defined(input_color_encoding_linear) && !defined(color_type_point_index)
-		vColor = toLinear(vColor);
+		// Convert from linear input into sRGB output.
+		vColor = fromLinear(vColor);
 	#endif
 
 	#if defined(output_color_encoding_linear) && defined(input_color_encoding_sRGB) && !defined(color_type_point_index)
-		vColor = fromLinear(vColor);
+		// Convert from sRGB input into linear output.
+		vColor = toLinear(vColor);
 	#endif
 }
