@@ -80,6 +80,12 @@ uniform sampler2D gradient;
 uniform sampler2D classificationLUT;
 uniform sampler2D depthMap;
 
+// Color map overlay (used for large rectangle counts via a rasterized texture)
+uniform bool useColorMap;
+uniform sampler2D colorMap;
+uniform vec4 colorMapBounds;   // [minX, minY, sizeX, sizeY]
+uniform float colorMapOpacity;
+
 #ifdef highlight_point
 	uniform vec3 highlightedPointCoordinate;
 	uniform bool enablePointHighlighting;
@@ -491,6 +497,24 @@ void main() {
 		if (getClassification().a == 0.0) {
 			gl_Position = vec4(100.0, 100.0, 100.0, 0.0); // Cull point if classification alpha is zero
 			return;
+		}
+	#endif
+
+	// COLOR MAP OVERLAY (fast path for many rectangles)
+	#if !defined(color_type_point_index)
+		if (useColorMap) {
+			vec4 world = modelMatrix * vec4(position, 1.0);
+			vec2 uv = (world.xy - colorMapBounds.xy) / colorMapBounds.zw;
+			if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
+				vec4 mapColor = texture(colorMap, uv);
+				if (mapColor.a > 0.0) {
+					#ifdef new_format
+						vColor.xyz = mix(vColor.xyz, mapColor.rgb, clamp(colorMapOpacity * mapColor.a, 0.0, 1.0));
+					#else
+						vColor = mix(vColor, mapColor.rgb, clamp(colorMapOpacity * mapColor.a, 0.0, 1.0));
+					#endif
+				}
+			}
 		}
 	#endif
 
