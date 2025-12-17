@@ -32,7 +32,7 @@ import {PointCloudOctree} from '../point-cloud-octree';
 import {PointCloudOctreeNode} from '../point-cloud-octree-node';
 import {byLevelAndIndex} from '../utils/utils';
 import {DEFAULT_CLASSIFICATION} from './classification';
-import {ClipMode, IClipBox} from './clipping';
+import {ClipMode, IClipBox, IColorBox} from './clipping';
 import {PointColorType, PointOpacityType, PointShape, PointSizeType, TreeType} from './enums';
 import {SPECTRAL} from './gradients';
 import {
@@ -89,6 +89,12 @@ export interface IPointCloudMaterialParameters {
 export interface IPointCloudMaterialUniforms {
 	/** Bounding box size as [width, height, depth] */
 	bbSize: IUniform<[number, number, number]>;
+	/** Number of active color boxes */
+	colorBoxCount: IUniform<number>;
+	/** Array containing color box inverse transforms */
+	colorBoxes: IUniform<Float32Array>;
+	/** Array containing per-color-box RGB values */
+	colorBoxColors: IUniform<Float32Array>;
 	/** Supplement value for depth blending calculations */
 	blendDepthSupplement: IUniform<number>;
 	/** Hardness factor for blending operations */
@@ -260,6 +266,10 @@ export class PointCloudMaterial extends RawShaderMaterial
 
 	clipBoxes: IClipBox[] = [];
 
+	numColorBoxes: number = 0;
+
+	colorBoxes: IColorBox[] = [];
+
 	visibleNodesTexture: Texture | undefined;
 
 	private visibleNodeTextureOffsets = new Map<string, number>();
@@ -276,6 +286,9 @@ export class PointCloudMaterial extends RawShaderMaterial
 
 	uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>> = {
 		bbSize: makeUniform('fv', [0, 0, 0] as [number, number, number]),
+		colorBoxCount: makeUniform('f', 0),
+		colorBoxes: makeUniform('Matrix4fv', [] as any),
+		colorBoxColors: makeUniform('fv', [] as any),
 		blendDepthSupplement: makeUniform('f', 0.0),
 		blendHardness: makeUniform('f', 2.0),
 		classificationLUT: makeUniform('t', this.classificationTexture || new Texture()),
@@ -608,6 +621,11 @@ export class PointCloudMaterial extends RawShaderMaterial
   		define('use_clip_box');
   	}
 
+  	if (this.numColorBoxes > 0)
+  	{
+  		define('use_color_boxes');
+  	}
+
   	if (this.highlightPoint) 
   	{
   		define('highlight_point');
@@ -670,6 +688,62 @@ export class PointCloudMaterial extends RawShaderMaterial
   	}
 
   	this.setUniform('clipBoxes', clipBoxesArray);
+  }
+
+  /**
+   * Sets a list of oriented boxes that override point colors when a point lies inside.
+   * Each box uses its `inverse` matrix to transform world coordinates into normalized
+   * box space where the extents are expected in [-0.5, 0.5] for x/y/z.
+   */
+  setColorBoxes(colorBoxes: IColorBox[]): void
+  {
+  	if (!colorBoxes)
+  	{
+  		return;
+  	}
+
+  	this.colorBoxes = colorBoxes;
+
+  	const doUpdate =
+	  this.numColorBoxes !== colorBoxes.length && (colorBoxes.length === 0 || this.numColorBoxes === 0);
+
+  	this.numColorBoxes = colorBoxes.length;
+  	this.setUniform('colorBoxCount', this.numColorBoxes);
+
+  	if (doUpdate)
+  	{
+  		this.updateShaderSource();
+  	}
+
+  	const boxesLength = this.numColorBoxes * 16;
+  	const boxesArray = new Float32Array(boxesLength);
+
+  	for (let i = 0; i < this.numColorBoxes; i++)
+  	{
+  		boxesArray.set(colorBoxes[i].inverse.elements, 16 * i);
+  	}
+
+  	for (let i = 0; i < boxesLength; i++)
+  	{
+  		if (isNaN(boxesArray[i]))
+  		{
+  			boxesArray[i] = Infinity;
+  		}
+  	}
+
+  	const colorsLength = this.numColorBoxes * 3;
+  	const colorsArray = new Float32Array(colorsLength);
+  	for (let i = 0; i < this.numColorBoxes; i++)
+  	{
+  		const c = colorBoxes[i].color;
+  		const o = 3 * i;
+  		colorsArray[o + 0] = c.r;
+  		colorsArray[o + 1] = c.g;
+  		colorsArray[o + 2] = c.b;
+  	}
+
+  	this.setUniform('colorBoxes', boxesArray);
+  	this.setUniform('colorBoxColors', colorsArray);
   }
 
   get gradient(): IGradient 
