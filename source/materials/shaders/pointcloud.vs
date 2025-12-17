@@ -2,7 +2,6 @@ precision highp float;
 precision highp int;
 
 #define max_clip_boxes 30  // Maximum number of clipping boxes
-#define max_color_boxes 30 // Maximum number of color override boxes
 
 // Input Attributes
 in vec3 position;
@@ -36,12 +35,6 @@ uniform float orthoHeight;
 
 #if defined use_clip_box
 	uniform mat4 clipBoxes[max_clip_boxes]; // Clipping box transforms
-#endif
-
-#if defined use_color_boxes
-	uniform mat4 colorBoxes[max_color_boxes];      // Color box inverse transforms
-	uniform vec3 colorBoxColors[max_color_boxes];  // Per-box override RGB
-	uniform float colorBoxCount;
 #endif
 
 uniform float heightMin;
@@ -540,23 +533,6 @@ void main() {
 		#if defined clip_highlight_inside
 			if (insideAny) { vColor.r += 0.5; }
 		#endif
-	#endif
-
-	// COLOR OVERRIDE BOXES (do not interfere with point picking mode)
-	#if defined(use_color_boxes) && !defined(color_type_point_index)
-		for (int i = 0; i < max_color_boxes; i++) {
-			if (i == int(colorBoxCount)) break;
-			vec4 boxPosition = colorBoxes[i] * modelMatrix * vec4(position, 1.0);
-			bool inside = abs(boxPosition.x) <= 0.5 && abs(boxPosition.y) <= 0.5 && abs(boxPosition.z) <= 0.5;
-			if (inside) {
-				#ifdef new_format
-					vColor.xyz = colorBoxColors[i];
-				#else
-					vColor = colorBoxColors[i];
-				#endif
-				break;
-			}
-		}
 	#endif
 
 

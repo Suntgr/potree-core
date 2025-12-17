@@ -1,4 +1,4 @@
-import {Box3, Color, Matrix4, Vector3} from 'three';
+import {Box3, Matrix4, Vector3} from 'three';
 
 export enum ClipMode {
   DISABLED = 0,
@@ -12,13 +12,4 @@ export interface IClipBox {
   inverse: Matrix4;
   matrix: Matrix4;
   position: Vector3;
-}
-
-/**
- * Color box definition used to override point colors inside oriented boxes.
- * The `inverse` matrix should transform world coordinates to a normalized
- * box space where the box extents are within [-0.5, 0.5] on each axis.
- */
-export interface IColorBox extends IClipBox {
-  color: Color;
 }
