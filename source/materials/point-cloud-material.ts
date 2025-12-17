@@ -97,6 +97,11 @@ export interface IPointCloudMaterialUniforms {
 	colorMap: IUniform<Texture>;
 	/** World-space XY bounds for mapping to colorMap: [minX, minY, sizeX, sizeY] */
 	colorMapBounds: IUniform<[number, number, number, number]>;
+	/**
+	 * Which world-space plane to use for mapping:
+	 * 0 = XY, 1 = XZ, 2 = YZ
+	 */
+	colorMapPlane: IUniform<number>;
 	/** Opacity/mix factor for color map overlay */
 	colorMapOpacity: IUniform<number>;
 	/** Supplement value for depth blending calculations */
@@ -293,6 +298,7 @@ export class PointCloudMaterial extends RawShaderMaterial
 		useColorMap: makeUniform('b', false),
 		colorMap: makeUniform('t', generateDataTexture(1, 1, new Color(0x000000))),
 		colorMapBounds: makeUniform('fv', [0, 0, 1, 1] as [number, number, number, number]),
+		colorMapPlane: makeUniform('f', 0.0),
 		colorMapOpacity: makeUniform('f', 1.0),
 		blendDepthSupplement: makeUniform('f', 0.0),
 		blendHardness: makeUniform('f', 2.0),
@@ -725,6 +731,8 @@ export class PointCloudMaterial extends RawShaderMaterial
   	options: {
   		/** Bounds used to map world XY into the texture. Defaults to unit square if not provided. */
   		bounds?: Box3 | {minX: number; minY: number; maxX: number; maxY: number};
+  		/** Which world-space plane to use for mapping: 'xy' | 'xz' | 'yz'. Default 'xy'. */
+  		plane?: 'xy' | 'xz' | 'yz';
   		/** Texture resolution (square). Typical values: 1024/2048. Default 2048. */
   		resolution?: number;
   		/** Global mix factor for overlay. Default 1.0 */
@@ -745,6 +753,8 @@ export class PointCloudMaterial extends RawShaderMaterial
   	const resolution = Math.max(1, Math.floor(options.resolution ?? 2048));
   	const opacity = options.opacity ?? 1.0;
   	const clear = options.clear !== false;
+		const plane = options.plane ?? 'xy';
+		this.setUniform('colorMapPlane', plane === 'xy' ? 0.0 : plane === 'xz' ? 1.0 : 2.0);
 
   	let minX = 0, minY = 0, maxX = 1, maxY = 1;
   	const b = options.bounds;
@@ -753,8 +763,16 @@ export class PointCloudMaterial extends RawShaderMaterial
   		if ((b as any).isBox3)
   		{
   			const bb = b as Box3;
-  			minX = bb.min.x; minY = bb.min.y;
-  			maxX = bb.max.x; maxY = bb.max.y;
+  			if (plane === 'xy') {
+  				minX = bb.min.x; minY = bb.min.y;
+  				maxX = bb.max.x; maxY = bb.max.y;
+  			} else if (plane === 'xz') {
+  				minX = bb.min.x; minY = bb.min.z;
+  				maxX = bb.max.x; maxY = bb.max.z;
+  			} else { // 'yz'
+  				minX = bb.min.y; minY = bb.min.z;
+  				maxX = bb.max.y; maxY = bb.max.z;
+  			}
   		}
   		else
   		{

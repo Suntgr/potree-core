@@ -78,6 +78,9 @@ uniform bool useColorMap;
 uniform sampler2D colorMap;
 uniform vec4 colorMapBounds;   // [minX, minY, sizeX, sizeY]
 uniform float colorMapOpacity;
+// Which world-space plane to use for mapping:
+// 0 = XY, 1 = XZ, 2 = YZ
+uniform float colorMapPlane;
 
 #ifdef highlight_point
 	uniform vec3 highlightedPointCoordinate;
@@ -497,7 +500,15 @@ void main() {
 	#if !defined(color_type_point_index)
 		if (useColorMap) {
 			vec4 world = modelMatrix * vec4(position, 1.0);
-			vec2 uv = (world.xy - colorMapBounds.xy) / colorMapBounds.zw;
+			vec2 cm;
+			if (colorMapPlane < 0.5) {
+				cm = world.xy;
+			} else if (colorMapPlane < 1.5) {
+				cm = vec2(world.x, world.z);
+			} else {
+				cm = world.yz;
+			}
+			vec2 uv = (cm - colorMapBounds.xy) / colorMapBounds.zw;
 			if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
 				vec4 mapColor = texture(colorMap, uv);
 				if (mapColor.a > 0.0) {
