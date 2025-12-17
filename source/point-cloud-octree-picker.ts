@@ -376,6 +376,13 @@ export class PointCloudOctreePicker
 			return null;
 		}
 
+		// Expose indices and node for downstream use (e.g. updating per-point attributes like classification).
+		// `pIndex` is the point index inside the node geometry.
+		// `pcIndex` is the rendered node index within the pick render pass.
+		point.pIndex = hit.pIndex;
+		point.pcIndex = hit.pcIndex;
+		point.node = nodes[hit.pcIndex].node;
+
 		point.pointCloud = nodes[hit.pcIndex].octree;
 
 		const attributes: BufferAttribute[] = (points.geometry as any).attributes;
